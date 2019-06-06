@@ -50,7 +50,7 @@ private:
     void _flushIfNeeded(boost::posix_time::ptime datetime, const std::string &db, const std::string &command);
 
 public:
-    explicit QueuesSimplifier(const std::string &log_path="queue.log", const std::string &result_path="result.log");
+    explicit QueuesSimplifier(const std::string &log_path="query.log", const std::string &result_path="result.log");
 
     void parse();
 
