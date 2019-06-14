@@ -9,21 +9,21 @@ std::string _datetime_to_str(const boost::posix_time::ptime &datetime) {
 }
 
 void QueuesSimplifier::_outputGroupedQueries() {
-    for (const auto &db_item:this->_databases) {
+    for (const auto &db_item:_databases) {
         for (const auto &insert_time:db_item.second.insert_times) {
             _result << _datetime_to_str(insert_time.first) << " " << db_item.first << " INSERT INTO "
                     << insert_time.second << "("
-                    << boost::algorithm::join(db_item.second.database.at(insert_time.second).columns, ", ")
+                    << boost::algorithm::join(db_item.second.tables.at(insert_time.second).column_names, ", ")
                     << ") VALUES ";
-            for (int i = 0; i < db_item.second.database.at(insert_time.second).size; i++) {
+            for (int i = 0; i < db_item.second.tables.at(insert_time.second).size; i++) {
                 if (i != 0)
                     _result << ", ";
                 _result << "(";
 
-                for (const auto &column:db_item.second.database.at(insert_time.second).columns) {
-                    if (column != *db_item.second.database.at(insert_time.second).columns.begin())
+                for (const auto &column:db_item.second.tables.at(insert_time.second).column_names) {
+                    if (column != *db_item.second.tables.at(insert_time.second).column_names.begin())
                         _result << ", ";
-                    _result << db_item.second.database.at(insert_time.second).table.at(column)[i];
+                    _result << db_item.second.tables.at(insert_time.second).columns.at(column)[i];
                 }
                 _result << ")";
             }
@@ -40,36 +40,39 @@ QueuesSimplifier::_parseTupleValues(const boost::posix_time::ptime &datetime, co
     boost::regex_match(table_string, tableRegexResult, _table_regex);
     table = tableRegexResult[1];
     std::string mapping = tableRegexResult[2];
-    std::vector<std::string> columns;
-    boost::algorithm::split_regex(columns, mapping, boost::regex(",\\s?"));
+    std::vector<std::string> column_names;
+    boost::algorithm::split_regex(column_names, mapping, boost::regex(",\\s?"));
     std::vector<std::string> values;
     std::string values_string = queryRegexResult[4].length() ? queryRegexResult[4] : queryRegexResult[5];
     boost::algorithm::split_regex(values, values_string, boost::regex(",\\s?"));
-    if (!this->_databases[db].database.count(table))
-        this->_databases[db].insert_times.insert({datetime, table});
-    for (int idx = 0; idx < columns.size(); idx++) {
-        this->_createColumnIfNeeded(db, table, columns[idx]);
-        this->_databases[db].database[table].table[columns[idx]].push_back(values[idx]);
+    auto &current_database = _databases[db];
+    if (!current_database.tables.count(table))
+        current_database.insert_times.insert({datetime, table});
+    auto &current_table = current_database.tables[table];
+    for (int idx = 0; idx < column_names.size(); idx++) {
+        _createColumnIfNeeded(db, table, column_names[idx]);
+        current_table.columns[column_names[idx]].push_back(values[idx]);
     }
-    this->_databases[db].database[table].size++;
-    this->_fillEmptyValues(db, table);
-    this->_databases[db].queries_grouped++;
+    current_table.size++;
+    _fillEmptyValues(db, table);
+    current_database.queries_grouped++;
 }
 
 void
-QueuesSimplifier::_createColumnIfNeeded(const std::string &db, const std::string &table, const std::string &column) {
-    if (!this->_databases[db].database[table].columns.count(column)) {
-        this->_databases[db].database[table].columns.insert(column);
-        this->_databases[db].database[table].table[column].assign(this->_databases[db].database[table].size,
-                                                                  "null");
+QueuesSimplifier::_createColumnIfNeeded(const std::string &db, const std::string &table, const std::string &column_name) {
+    auto &current_table = _databases[db].tables[table];
+    if (!current_table.column_names.count(column_name)) {
+        current_table.column_names.insert(column_name);
+        current_table.columns[column_name].assign(current_table.size, "null");
     }
 }
 
 void QueuesSimplifier::_fillEmptyValues(const std::string &db, const std::string &table) {
-    for (const auto &column:this->_databases[db].database[table].columns)
-        if (this->_databases[db].database[table].table[column].size() <
-            this->_databases[db].database[table].size)
-            this->_databases[db].database[table].table[column].push_back("null");
+    auto &current_table = _databases[db].tables[table];
+    for (const auto &column_name:current_table.column_names)
+        if (current_table.columns[column_name].size() <
+            current_table.size)
+            current_table.columns[column_name].push_back("null");
 }
 
 void QueuesSimplifier::_parseMappedValues(const std::string &db, std::string &table, boost::smatch &queryRegexResult) {
@@ -80,24 +83,25 @@ void QueuesSimplifier::_parseMappedValues(const std::string &db, std::string &ta
     for (const auto &column_value:columns_values) {
         std::vector<std::string> value_pair;
         boost::split(value_pair, column_value, boost::is_any_of("="));
-        this->_createColumnIfNeeded(db, table, value_pair[0]);
-        this->_databases[db].database[table].table[value_pair[0]].push_back(value_pair[1]);
+        _createColumnIfNeeded(db, table, value_pair[0]);
+        _databases[db].tables[table].columns[value_pair[0]].push_back(value_pair[1]);
     }
-    this->_databases[db].database[table].size++;
-    this->_fillEmptyValues(db, table);
-    this->_databases[db].queries_grouped++;
+    _databases[db].tables[table].size++;
+    _fillEmptyValues(db, table);
+    _databases[db].queries_grouped++;
 }
 
 void
 QueuesSimplifier::_flushIfNeeded(boost::posix_time::ptime datetime, const std::string &db, const std::string &command) {
-    if (this->_databases.count(db)) {
-        if (datetime - this->_databases[db].last_updated_time > boost::posix_time::minutes(1) ||
-            this->_databases[db].queries_grouped == 10 || command == "UPDATE" || command.empty()) {
-            this->_outputGroupedQueries();
-            this->_databases[db].insert_times.clear();
-            this->_databases[db].database.clear();
-            this->_databases[db].queries_grouped = 0;
-            this->_databases[db].last_updated_time = datetime;
+    if (_databases.count(db)) {
+        auto &current_database = _databases[db];
+        if (datetime - current_database.last_updated_time > boost::posix_time::minutes(1) ||
+            current_database.queries_grouped == 10 || command == "UPDATE" || command.empty()) {
+            _outputGroupedQueries();
+            current_database.insert_times.clear();
+            current_database.tables.clear();
+            current_database.queries_grouped = 0;
+            current_database.last_updated_time = datetime;
         }
     }
 }
@@ -119,17 +123,17 @@ void QueuesSimplifier::parse() {
         boost::regex_match(query, queryRegexResult, _query_regex);
         std::string command = queryRegexResult[1];
         std::string table;
-        this->_flushIfNeeded(datetime, db, command);
+        _flushIfNeeded(datetime, db, command);
         if (boost::to_upper_copy(command.substr(0, 6)) == "INSERT") {
             if (boost::to_upper_copy(queryRegexResult.str(3)) != "SET")
-                this->_parseTupleValues(datetime, db, table, queryRegexResult);
+                _parseTupleValues(datetime, db, table, queryRegexResult);
             else
-                this->_parseMappedValues(db, table, queryRegexResult);
+                _parseMappedValues(db, table, queryRegexResult);
         } else {
             _result << dbRegexResult[0] << std::endl;
         }
     }
-    this->_outputGroupedQueries();
+    _outputGroupedQueries();
 }
 
 QueuesSimplifier::~QueuesSimplifier() {

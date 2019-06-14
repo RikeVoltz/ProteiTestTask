@@ -7,14 +7,14 @@
 #include <unordered_map>
 
 struct table {
-    std::unordered_map<std::string, std::vector<std::string>> table;
-    std::unordered_set<std::string> columns;
+    std::unordered_map<std::string, std::vector<std::string>> columns;
+    std::unordered_set<std::string> column_names;
     size_t size;
 };
 
 struct database {
     boost::posix_time::ptime last_updated_time;
-    std::unordered_map<std::string, table> database;
+    std::unordered_map<std::string, table> tables;
     std::set<std::pair<boost::posix_time::ptime, std::string>> insert_times;
     size_t queries_grouped;
 };
