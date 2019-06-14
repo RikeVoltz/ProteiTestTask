@@ -40,17 +40,17 @@ private:
 
     void _createColumnIfNeeded(const std::string &db, const std::string &table, const std::string &column);
 
-    void _parseTupleValues(const boost::posix_time::ptime &datetime, const std::string &db, std::string &table,
-                           boost::smatch &queryRegexResult);
+    void _parseTupleValues(const boost::posix_time::ptime &datetime, const std::string &db, std::string &table_string,
+                           std::string &values_string);
 
     void _fillEmptyValues(const std::string &db, const std::string &table);
 
-    void _parseMappedValues(const std::string &db, std::string &table, boost::smatch &queryRegexResult);
+    void _parseMappedValues(const std::string &db, std::string &table, std::string &mapped_values);
 
     void _flushIfNeeded(boost::posix_time::ptime datetime, const std::string &db, const std::string &command);
 
 public:
-    explicit QueuesSimplifier(const std::string &log_path="query.log", const std::string &result_path="result.log");
+    explicit QueuesSimplifier(const std::string &log_path = "query.log", const std::string &result_path = "result.log");
 
     void parse();
 

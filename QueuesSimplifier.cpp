@@ -33,17 +33,15 @@ void QueuesSimplifier::_outputGroupedQueries() {
 }
 
 void
-QueuesSimplifier::_parseTupleValues(const boost::posix_time::ptime &datetime, const std::string &db, std::string &table,
-                                    boost::smatch &queryRegexResult) {
+QueuesSimplifier::_parseTupleValues(const boost::posix_time::ptime &datetime, const std::string &db,
+                                    std::string &table_string, std::string &values_string) {
     boost::smatch tableRegexResult;
-    std::string table_string = queryRegexResult[2];
     boost::regex_match(table_string, tableRegexResult, _table_regex);
-    table = tableRegexResult[1];
-    std::string mapping = tableRegexResult[2];
+    std::string table = tableRegexResult[1];
+    std::string column_names_string = tableRegexResult[2];
     std::vector<std::string> column_names;
-    boost::algorithm::split_regex(column_names, mapping, boost::regex(",\\s?"));
+    boost::algorithm::split_regex(column_names, column_names_string, boost::regex(",\\s?"));
     std::vector<std::string> values;
-    std::string values_string = queryRegexResult[4].length() ? queryRegexResult[4] : queryRegexResult[5];
     boost::algorithm::split_regex(values, values_string, boost::regex(",\\s?"));
     auto &current_database = _databases[db];
     if (!current_database.tables.count(table))
@@ -59,7 +57,8 @@ QueuesSimplifier::_parseTupleValues(const boost::posix_time::ptime &datetime, co
 }
 
 void
-QueuesSimplifier::_createColumnIfNeeded(const std::string &db, const std::string &table, const std::string &column_name) {
+QueuesSimplifier::_createColumnIfNeeded(const std::string &db, const std::string &table,
+                                        const std::string &column_name) {
     auto &current_table = _databases[db].tables[table];
     if (!current_table.column_names.count(column_name)) {
         current_table.column_names.insert(column_name);
@@ -75,16 +74,14 @@ void QueuesSimplifier::_fillEmptyValues(const std::string &db, const std::string
             current_table.columns[column_name].push_back("null");
 }
 
-void QueuesSimplifier::_parseMappedValues(const std::string &db, std::string &table, boost::smatch &queryRegexResult) {
-    table = queryRegexResult[2];
-    std::string mapped_values = queryRegexResult[4];
-    std::vector<std::string> columns_values;
-    boost::algorithm::split_regex(columns_values, mapped_values, boost::regex(",\\s?"));
-    for (const auto &column_value:columns_values) {
-        std::vector<std::string> value_pair;
-        boost::split(value_pair, column_value, boost::is_any_of("="));
-        _createColumnIfNeeded(db, table, value_pair[0]);
-        _databases[db].tables[table].columns[value_pair[0]].push_back(value_pair[1]);
+void QueuesSimplifier::_parseMappedValues(const std::string &db, std::string &table, std::string &mapped_values) {
+    std::vector<std::string> column_value_strings;
+    boost::algorithm::split_regex(column_value_strings, mapped_values, boost::regex(",\\s?"));
+    for (const auto &column_value_string:column_value_strings) {
+        std::vector<std::string> column_value_pair;
+        boost::split(column_value_pair, column_value_string, boost::is_any_of("="));
+        _createColumnIfNeeded(db, table, column_value_pair[0]);
+        _databases[db].tables[table].columns[column_value_pair[0]].push_back(column_value_pair[1]);
     }
     _databases[db].tables[table].size++;
     _fillEmptyValues(db, table);
@@ -122,13 +119,17 @@ void QueuesSimplifier::parse() {
         std::string query = dbRegexResult[3];
         boost::regex_match(query, queryRegexResult, _query_regex);
         std::string command = queryRegexResult[1];
-        std::string table;
+        std::string table_string;
         _flushIfNeeded(datetime, db, command);
         if (boost::to_upper_copy(command.substr(0, 6)) == "INSERT") {
-            if (boost::to_upper_copy(queryRegexResult.str(3)) != "SET")
-                _parseTupleValues(datetime, db, table, queryRegexResult);
-            else
-                _parseMappedValues(db, table, queryRegexResult);
+            table_string = queryRegexResult[2];
+            if (boost::to_upper_copy(queryRegexResult.str(3)) != "SET") {
+                std::string values_string = queryRegexResult[4].length() ? queryRegexResult[4] : queryRegexResult[5];
+                _parseTupleValues(datetime, db, table_string, values_string);
+            } else {
+                std::string mapped_values = queryRegexResult[4];
+                _parseMappedValues(db, table_string, mapped_values);
+            }
         } else {
             _result << dbRegexResult[0] << std::endl;
         }
